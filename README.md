@@ -1,3 +1,6 @@
+<img width="128" height="128" alt="Generated_Image_August_05__2026_-_1_37PM-removebg-preview" src="https://github.com/user-attachments/assets/fff826f2-f1ab-4190-aa13-34488e9ea58e" />
+
+
 # Ledge
 
 A docked sidebar for Windows. It sits on the edge of your screen and holds your
