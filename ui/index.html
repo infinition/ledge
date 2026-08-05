@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>Ledge</title>
+<style>
+  :root {
+    --th: 78px;
+    --icon: 34px;
+    --gap: 6px;
+    --bar-bg: #16171b;
+    --fg: #e8eaf0;
+    --muted: #8b90a0;
+    --hover: #2a2e37;
+    --accent: #6ea8fe;
+    --accent-soft: #3a5a9a55;
+    --ok: #63d18b;
+    --warn: #ffcf5c;
+    --bad: #ff6b6b;
+    --panel: #26262c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box;
+      -webkit-user-select: none; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body { color: var(--fg); font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+  img { pointer-events: none; }
+
+  /* ---------- Barre (épinglée au bord docké) : placement libre ---------- */
+  #bar { position: absolute; background: var(--bar-bg); }
+  .edge-right  #bar { top: 0; bottom: 0; right: 0;  width: var(--th); }
+  .edge-left   #bar { top: 0; bottom: 0; left: 0;   width: var(--th); }
+  .edge-top    #bar { left: 0; right: 0; top: 0;    height: var(--th); }
+  .edge-bottom #bar { left: 0; right: 0; bottom: 0; height: var(--th); }
+  /* Barre repliée : la fenêtre fait déjà exactement l'épaisseur dockée, donc
+     la barre l'occupe entièrement. Sans ça il reste un liseré translucide le
+     long du bord intérieur (arrondi entre px CSS et px physiques). */
+  body:not(.grown) #bar { top: 0; right: 0; bottom: 0; left: 0; width: auto; height: auto; }
+  /* Éléments en positionnement absolu ; la position le long de l'axe est
+     posée en JS (left ou top). L'axe transverse est centré ou plein. */
+  #bar .tile, #bar .sep, #bar .gauge, #bar .cwidget { position: absolute; }
+  .edge-right #bar .tile, .edge-left #bar .tile,
+  .edge-right #bar .gauge, .edge-left #bar .gauge { left: 50%; transform: translateX(-50%); }
+  .edge-right #bar .sep, .edge-left #bar .sep,
+  .edge-right #bar .cwidget, .edge-left #bar .cwidget { left: 0; right: 0; }
+  .edge-top #bar .tile, .edge-bottom #bar .tile,
+  .edge-top #bar .gauge, .edge-bottom #bar .gauge { top: 50%; transform: translateY(-50%); }
+  .edge-top #bar .sep, .edge-bottom #bar .sep,
+  .edge-top #bar .cwidget, .edge-bottom #bar .cwidget { top: 0; bottom: 0; }
+
+  .tile {
+    width: calc(var(--icon) + 20px); height: calc(var(--icon) + 20px);
+    display: grid; place-items: center;
+    cursor: pointer; position: relative;
+    transition: background .12s ease, transform .06s ease;
+    flex: none;
+  }
+  .tile:hover { background: var(--hover); }
+  .tile.dragging { opacity: .55; background: var(--accent-soft); }
+  .tile img { width: var(--icon); height: var(--icon); }
+  .tile .fallback {
+    width: var(--icon); height: var(--icon); display: grid; place-items: center;
+    background: #3a3f4b; color: #cfd3dc; font-weight: 600; font-size: calc(var(--icon) * 0.5);
+  }
+
+  /* Indicateur d'app lancée (pastille, côté écran) */
+  .tile .dot { position: absolute; display: none; background: #9ab4ff; border-radius: 2px; pointer-events: none; }
+  .tile.running .dot { display: block; }
+  .edge-top    .tile .dot { bottom: 2px; left: 50%; transform: translateX(-50%); width: 14px; height: 3px; }
+  .edge-bottom .tile .dot { top: 2px;    left: 50%; transform: translateX(-50%); width: 14px; height: 3px; }
+  .edge-right  .tile .dot { left: 2px;  top: 50%; transform: translateY(-50%); width: 3px; height: 14px; }
+  .edge-left   .tile .dot { right: 2px; top: 50%; transform: translateY(-50%); width: 3px; height: 14px; }
+
+  /* Séparateur : zone de clic large, trait fin centré */
+  .sep { flex: none; cursor: grab; display: grid; place-items: center; }
+  .sep::before { content: ''; background: #ffffff33; }
+  .edge-right .sep, .edge-left .sep { width: 100%; height: 12px; }
+  .edge-right .sep::before, .edge-left .sep::before { width: 40px; height: 2px; }
+  .edge-top .sep, .edge-bottom .sep { width: 12px; height: 100%; }
+  .edge-top .sep::before, .edge-bottom .sep::before { width: 2px; height: 40px; }
+  .sep.dragging { opacity: .55; }
+
+  /* ---------- Widgets custom ---------- */
+  .cwidget { position: relative; flex: none; }
+  .edge-right .cwidget, .edge-left .cwidget { width: 100%; padding: 8px 4px 4px; }
+  .edge-top .cwidget, .edge-bottom .cwidget { height: 100%; padding: 4px 4px 4px 8px; }
+  .cwidget iframe { width: 100%; height: 100%; border: 0; background: transparent; display: block; }
+  /* Poignées de redimensionnement invisibles, aux deux extrémités du bloc. */
+  .cwidget .grip { position: absolute; background: transparent; z-index: 6; }
+  .cwidget .grip:hover { background: var(--accent-soft); }
+  .edge-right .cwidget .grip-start, .edge-left .cwidget .grip-start { left: 0; right: 0; top: 0; height: 6px; cursor: ns-resize; }
+  .edge-right .cwidget .grip-end, .edge-left .cwidget .grip-end { left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+  .edge-top .cwidget .grip-start, .edge-bottom .cwidget .grip-start { top: 0; bottom: 0; left: 0; width: 6px; cursor: ew-resize; }
+  .edge-top .cwidget .grip-end, .edge-bottom .cwidget .grip-end { top: 0; bottom: 0; right: 0; width: 6px; cursor: ew-resize; }
+  /* Espaceur transparent : invisible au repos, léger repère au survol. */
+  .cwidget.cspacer { background: transparent; }
+  .cwidget.cspacer:hover { background: #ffffff0f; }
+  /* Zone de prise pour le glisser (Ctrl appuyé) : couvre tout le bloc, active
+     seulement en mode arrangement pour laisser passer le contenu sinon. */
+  .cwidget .drag-catch { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+  body.ctrl .cwidget .drag-catch { z-index: 7; pointer-events: auto; cursor: grab; }
+  body.ctrl .cwidget.dragging .drag-catch { cursor: grabbing; }
+  .cwidget.dragging, .gauge.dragging { opacity: .6; }
+
+  /* ---------- Jauges système ---------- */
+  .gauge { width: 58px; text-align: center; position: relative; padding: 4px 0; }
+  .gauge .name { font-size: 9px; color: var(--muted); letter-spacing: .06em; }
+  .gauge .val  { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .gauge .bar  { height: 5px; background: #ffffff1f; overflow: hidden; margin-top: 3px; }
+  .gauge .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .5s ease; }
+  body.ctrl .gauge { cursor: grab; }
+  body.ctrl .gauge.dragging { cursor: grabbing; }
+
+  /* ---------- Menu contextuel / réglages ---------- */
+  #menu {
+    position: absolute; min-width: 208px; max-width: 440px; z-index: 100;
+    overflow-y: auto;
+    background: var(--panel); border: 0;
+    box-shadow: none; padding: 4px;
+  }
+  .edge-top #menu, .edge-bottom #menu {
+    max-height: calc(100vh - var(--th) - 16px);
+  }
+  .edge-left #menu, .edge-right #menu {
+    max-height: calc(100vh - 16px);
+  }
+  #menu.hidden { display: none; }
+  #menu button {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 7px 10px; background: none; border: 0; color: var(--fg);
+    font: inherit; text-align: left; cursor: pointer;
+  }
+  #menu button:hover { background: var(--accent-soft); }
+  #menu button.danger:hover { background: #ff6b6b33; }
+  #menu .mark { width: 14px; color: var(--accent); flex: none; }
+  #menu hr { border: 0; border-top: 1px solid #ffffff18; margin: 4px 2px; }
+  #menu.settings { min-width: 250px; padding: 12px; }
+  .s-title { font-weight: 600; font-size: 13px; margin-bottom: 10px; }
+  .s-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; margin: 10px 0; }
+  .s-row label { font-size: 12px; }
+  .s-row .s-val { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .s-row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); cursor: pointer; }
+  #menu textarea {
+    width: 100%; height: 140px; background: #1b1b20; color: var(--fg);
+    border: 1px solid #ffffff20; font: 12px/1.4 Consolas, monospace; padding: 6px;
+    resize: vertical; -webkit-user-select: text; user-select: text;
+  }
+  #menu input[type=text], #menu select {
+    width: 100%; background: #1b1b20; color: var(--fg);
+    border: 1px solid #ffffff20; font: 12px "Segoe UI", sans-serif; padding: 5px 6px;
+    margin-bottom: 6px; -webkit-user-select: text; user-select: text;
+  }
+  .s-check { display: flex; align-items: center; gap: 7px; font-size: 12px; margin: 7px 0; cursor: pointer; }
+  .s-check input { accent-color: var(--accent); cursor: pointer; }
+  .s-import { display: flex; gap: 6px; }
+  .s-import select { flex: 1; margin-bottom: 0; }
+  .s-import button { width: auto; padding: 5px 10px; background: var(--accent-soft); flex: none; }
+  #menu .s-actions { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+  #menu .s-actions button { width: auto; padding: 6px 14px; background: var(--accent-soft); }
+  #menu .s-hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- Aperçus de fenêtres ---------- */
+  #previews { position: absolute; z-index: 90; display: none; gap: 8px; }
+  #previews.show { display: flex; }
+  .edge-right #previews, .edge-left #previews { flex-direction: column; }
+  .edge-top #previews, .edge-bottom #previews { flex-direction: row; }
+  .pv-card {
+    width: 212px; background: var(--panel); border: 0;
+    box-shadow: none; cursor: pointer; flex: none;
+  }
+  .pv-card:hover { background: var(--hover); }
+  .pv-head { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 10px; }
+  .pv-head span { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pv-x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 8px; }
+  .pv-x:hover { color: #fff; background: #ff6b6b55; }
+  .pv-thumb { width: 196px; height: 112px; margin: 0 8px 8px; background: #00000066; }
+</style>
+</head>
+<body class="edge-right">
+  <div id="bar"></div>
+
+  <div id="menu" class="hidden"></div>
+  <div id="previews"></div>
+
+<script>
+  // ===== État & pont IPC =====
+  let state = { items: [
+                  { type: 'gauge', key: 'cpu' }, { type: 'gauge', key: 'ram' },
+                  { type: 'gauge', key: 'gpu' }, { type: 'gauge', key: 'vram' },
+                ],
+                edge: 'right', startup: false, thickness: 78, icon: 34, gap: 6,
+                priority: 'vertical', edges: [], canRemove: false, autohide: false,
+                look: { color: '#16171b', opacity: 100, blur: false, systemColor: false, shadow: true },
+                sysColor: '#1f1f1f' };
+  state.windows = [];
+  // Ids stables (session) pour identifier les widgets dans les messages iframe,
+  // indépendants de leur position après un glisser.
+  let itemSeq = 0;
+  let lastHasGpu = true;
+  let menuCtx = null, menuShown = false;
+  // Fenêtre agrandie pour un menu : la barre reprend alors son épaisseur au
+  // lieu de remplir la fenêtre.
+  let grownWindow = false;
+
+  const post = (o) => window.ipc && window.ipc.postMessage(JSON.stringify(o));
+  const launch = (path) => post({ cmd: 'launch', path });
+  const vertical = () => state.edge === 'right' || state.edge === 'left';
+
+  // Taille d'un élément le long de l'axe de la barre (pour l'empilement par
+  // défaut et le clamps du glisser).
+  function itemMainSize(it) {
+    const horizontal = !vertical();
+    switch (it.type) {
+      case 'app': return (state.icon || 34) + 20;
+      case 'separator': return 12;
+      case 'widget': return it.size || 120;
+      case 'gauge': return horizontal ? 58 : 28;
+      default: return 40;
+    }
+  }
+
+  // S'assure que chaque élément a une position. Une config héritée (tout à 0)
+  // est empilée une fois ; un élément ajouté ensuite est placé en bout.
+  function ensurePositions() {
+    const items = state.items || [];
+    // Au minimum 12px d'écart à l'empilement : les poignées ne se collent pas.
+    const gap = Math.max(state.gap || 0, 12);
+    const custom = items.some((it) => typeof it.pos === 'number' && it.pos !== 0);
+    let cursor = 0;
+    items.forEach((it) => {
+      if (custom && typeof it.pos === 'number') {
+        cursor = Math.max(cursor, it.pos + itemMainSize(it));
+      } else {
+        it.pos = cursor;
+        cursor += itemMainSize(it) + gap;
+      }
+    });
+  }
+
+  function applyBodyClass() {
+    // Conserve le mode arrangement (Ctrl) posé pendant un glisser.
+    const ctrl = document.body.classList.contains('ctrl') ? ' ctrl' : '';
+    document.body.className = 'edge-' + state.edge + (grownWindow ? ' grown' : '') + ctrl;
+  }
+  function setGrownWindow(on) { grownWindow = on; applyBodyClass(); }
+
+  window.setState = function (s) {
+    s.windows = state.windows;
+    state = s;
+    ensurePositions();
+    applyBodyClass();
+    applyMetrics();
+    applyLook();
+    renderBar();
+    applyGauges();
+  };
+
+  // ===== Apparence : teinte, opacité, verre dépoli =====
+  function applyLook() {
+    const l = state.look || {};
+    const hex = l.systemColor ? (state.sysColor || '#1f1f1f') : (l.color || '#16171b');
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    const [r, g, b] = m ? [1, 2, 3].map((i) => parseInt(m[i], 16)) : [22, 23, 27];
+    const o = Math.max(0, Math.min(100, l.opacity == null ? 100 : l.opacity)) / 100;
+    const root = document.documentElement.style;
+    root.setProperty('--bar-bg', `rgba(${r},${g},${b},${o})`);
+    // Le panneau de menu garde la teinte mais reste lisible.
+    const up = (v) => Math.min(255, v + 16);
+    root.setProperty('--panel', `rgba(${up(r)},${up(g)},${up(b)},${Math.max(o, 0.92)})`);
+  }
+  const postLook = () => post(Object.assign({ cmd: 'look' }, state.look));
+
+  // Les jauges vivent dans la liste unifiée state.items (entrées {type:'gauge'}).
+  // Sans GPU, les jauges GPU/VRAM sont masquées quelle que soit la liste.
+  function applyGauges() {
+    for (const k of ['gpu', 'vram']) {
+      const el = document.getElementById('g-' + k);
+      if (el) el.style.display = lastHasGpu ? '' : 'none';
+    }
+  }
+  window.applyEdge = (edge) => {
+    state.edge = edge;
+    applyBodyClass();
+    renderBar();
+  };
+  window.setStartup = (b) => { state.startup = b; };
+
+  function applyMetrics() {
+    const r = document.documentElement.style;
+    r.setProperty('--th', state.thickness + 'px');
+    r.setProperty('--icon', state.icon + 'px');
+    r.setProperty('--gap', state.gap + 'px');
+  }
+
+  // ===== Rendu de la barre : apps, séparateurs, widgets et jauges =====
+  function renderBar() {
+    const bar = document.getElementById('bar');
+    bar.innerHTML = '';
+    (state.items || []).forEach((it) => {
+      if (!it || typeof it !== 'object') return;
+      if (it.id == null) it.id = ++itemSeq;
+      if (it.type === 'gauge') {
+        const g = document.createElement('div');
+        g.className = 'gauge';
+        g.id = 'g-' + it.key;
+        g.dataset.id = it.id;
+        const nm = document.createElement('div'); nm.className = 'name';
+        nm.textContent = (it.key || '').toUpperCase();
+        const val = document.createElement('div'); val.className = 'val'; val.textContent = '–';
+        const barEl = document.createElement('div'); barEl.className = 'bar';
+        barEl.innerHTML = '<i></i>';
+        g.appendChild(nm); g.appendChild(val); g.appendChild(barEl);
+        if (vertical()) g.style.top = it.pos + 'px'; else g.style.left = it.pos + 'px';
+        g.addEventListener('pointerdown', (e) => {
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          try { g.setPointerCapture(e.pointerId); } catch (_) {}
+          dragStart(g, e.clientX, e.clientY);
+        });
+        bar.appendChild(g);
+        return;
+      }
+      if (it.type === 'widget') {
+        const box = document.createElement('div');
+        box.className = it.spacer ? 'cwidget cspacer' : 'cwidget';
+        box.dataset.id = it.id;
+        if (vertical()) box.style.height = it.size + 'px';
+        else box.style.width = it.size + 'px';
+        if (vertical()) box.style.top = it.pos + 'px'; else box.style.left = it.pos + 'px';
+        // Deux poignées invisibles, une à chaque extrémité du bloc.
+        const g0 = document.createElement('div'); g0.className = 'grip grip-start';
+        g0.addEventListener('pointerdown', (e) => startWidgetResize(e, box, true));
+        const g1 = document.createElement('div'); g1.className = 'grip grip-end';
+        g1.addEventListener('pointerdown', (e) => startWidgetResize(e, box, false));
+        box.appendChild(g0); box.appendChild(g1);
+        // Zone de prise pour Ctrl+glisser : couvre le bloc, active seulement
+        // pendant un glisser pour laisser passer l'iframe sinon.
+        const catchEl = document.createElement('div');
+        catchEl.className = 'drag-catch';
+        box.appendChild(catchEl);
+        box.addEventListener('pointerdown', (e) => {
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          try { box.setPointerCapture(e.pointerId); } catch (_) {}
+          dragStart(box, e.clientX, e.clientY);
+        });
+        if (!it.spacer) {
+          const fr = document.createElement('iframe');
+          fr.setAttribute('sandbox', 'allow-scripts');
+
+          // Fond des widgets forcé transparent dynamiquement, sans toucher au
+          // code de chaque widget : le thème de la barre reste visible.
+          const clearBg = '<style>html,body{background:transparent!important;background-color:transparent!important}</style>';
+
+          const script = `<script>
+            let dctrl = false;
+            document.addEventListener('contextmenu', function(e) {
+              e.preventDefault();
+              window.parent.postMessage({ type: 'cwidget-contextmenu', id: ${it.id}, clientX: e.clientX, clientY: e.clientY }, '*');
+            });
+            document.addEventListener('pointerdown', function(e) {
+              if (e.ctrlKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                dctrl = true;
+                window.parent.postMessage({ type: 'cwidget-dragstart', id: ${it.id}, clientX: e.clientX, clientY: e.clientY }, '*');
+              }
+            }, true);
+            document.addEventListener('pointermove', function(e) {
+              if (dctrl) window.parent.postMessage({ type: 'cwidget-dragmove', clientX: e.clientX, clientY: e.clientY }, '*');
+            }, true);
+            document.addEventListener('pointerup', function(e) {
+              if (dctrl) { dctrl = false; window.parent.postMessage({ type: 'cwidget-dragend' }, '*'); }
+            }, true);
+          <\/script>`;
+          fr.srcdoc = it.code + clearBg + script;
+          box.appendChild(fr);
+        }
+        bar.appendChild(box);
+        return;
+      }
+      if (it.type === 'separator') {
+        const sep = document.createElement('div');
+        sep.className = 'sep';
+        sep.dataset.id = it.id;
+        if (vertical()) sep.style.top = it.pos + 'px'; else sep.style.left = it.pos + 'px';
+        sep.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          try { sep.setPointerCapture(e.pointerId); } catch (_) {}
+          dragStart(sep, e.clientX, e.clientY);
+        });
+        bar.appendChild(sep);
+        return;
+      }
+      // App épinglée.
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.dataset.id = it.id;
+      tile.dataset.type = 'app';
+      tile.dataset.path = it.path;
+      tile.dataset.name = it.name || '';
+      tile.title = it.name || '';
+      if (vertical()) tile.style.top = it.pos + 'px'; else tile.style.left = it.pos + 'px';
+      if (it.icon) {
+        const img = document.createElement('img');
+        img.src = it.icon;
+        tile.appendChild(img);
+      } else {
+        const f = document.createElement('div');
+        f.className = 'fallback';
+        f.textContent = (it.name || '?').slice(0, 1).toUpperCase();
+        tile.appendChild(f);
+      }
+      const dot = document.createElement('i');
+      dot.className = 'dot';
+      tile.appendChild(dot);
+      setupApp(tile);
+      bar.appendChild(tile);
+    });
+    applyRunning();
+  }
+
+  // ===== Fenêtres ouvertes (poussées par Rust) =====
+  window.setWindows = (arr) => {
+    state.windows = arr;
+    applyRunning();
+  };
+  function applyRunning() {
+    const bar = document.getElementById('bar');
+    (state.items || []).forEach((it, i) => {
+      const el = bar.querySelector('[data-id="' + it.id + '"]');
+      if (el) el.classList.toggle('running', !!(state.windows[i] && state.windows[i].length));
+    });
+  }
+
+  // ===== Glisser pour réorganiser (tout élément) + clic pour lancer =====
+  let drag = null;
+  function dragStart(el, startX, startY, onClick) {
+    const it = state.items.find((x) => String(x.id) === el.dataset.id);
+    const cur = vertical() ? startY : startX;
+    drag = { el, it, startX, startY, grabOffset: cur - (it ? it.pos : 0), moved: false, lastIns: state.items.indexOf(it), onClick };
+    el.classList.add('dragging');
+    document.body.classList.add('ctrl');
+  }
+
+  // Recalcule les positions de tous les éléments en séquence (empilement avec
+  // gap) selon l'ordre de state.items. Le DOM reste dans l'ordre de rendu.
+  function recalcPositions() {
+    const gap = Math.max(state.gap || 0, 12);
+    let cursor = 0;
+    for (const it of state.items) {
+      it.pos = cursor;
+      cursor += itemMainSize(it) + gap;
+    }
+    // Applique au DOM : chaque élément est cherché par data-id.
+    const bar = document.getElementById('bar');
+    const horizontal = !vertical();
+    for (const it of state.items) {
+      const el = bar.querySelector('[data-id="' + it.id + '"]');
+      if (!el) continue;
+      if (horizontal) el.style.left = it.pos + 'px';
+      else el.style.top = it.pos + 'px';
+    }
+  }
+
+  // Trouve l'index d'insertion pour la position curseur donnée, en ignorant
+  // l'élément glissé (les midpoints sont calculés sur les éléments fixes).
+  function insertionIndex(cur) {
+    const bar = document.getElementById('bar');
+    const horizontal = !vertical();
+    for (let i = 0; i < state.items.length; i++) {
+      if (state.items[i] === drag.it) continue;
+      const el = bar.querySelector('[data-id="' + state.items[i].id + '"]');
+      if (!el) continue;
+      const tr = el.getBoundingClientRect();
+      const mid = horizontal ? (tr.left + tr.right) / 2 : (tr.top + tr.bottom) / 2;
+      if (cur < mid) return i;
+    }
+    return state.items.length;
+  }
+
+  // Déplace l'élément glissé : suit le pointeur visuellement, et réorganise
+  // les autres par échange de slots quand le curseur franchit un midpoint.
+  function dragMove(vpX, vpY) {
+    if (!drag || !drag.it) return;
+    const dx = vpX - drag.startX, dy = vpY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (!drag.moved) return;
+    const horizontal = !vertical();
+    const cur = horizontal ? vpX : vpY;
+    // Visuel : l'élément suit le pointeur (clampé à la fenêtre).
+    const limit = horizontal ? window.innerWidth : window.innerHeight;
+    const sz = horizontal ? drag.el.offsetWidth : drag.el.offsetHeight;
+    let visPos = cur - drag.grabOffset;
+    visPos = Math.max(0, Math.min(limit - sz, visPos));
+    if (horizontal) drag.el.style.left = visPos + 'px';
+    else drag.el.style.top = visPos + 'px';
+    // Slot : réorganise state.items si l'index d'insertion a changé.
+    const ins = insertionIndex(cur);
+    if (ins !== drag.lastIns) {
+      const from = state.items.indexOf(drag.it);
+      if (from >= 0) state.items.splice(from, 1);
+      const target = ins > from ? ins - 1 : ins;
+      state.items.splice(target, 0, drag.it);
+      recalcPositions();
+      // Recalcule l'offset pour que l'élément ne saute pas.
+      drag.grabOffset = cur - drag.it.pos;
+      drag.lastIns = ins;
+    }
+  }
+
+  function dragEnd() {
+    if (!drag) return;
+    const moved = drag.moved;
+    const onClick = drag.onClick;
+    drag.el.classList.remove('dragging');
+    document.body.classList.remove('ctrl');
+    drag = null;
+    if (!moved && onClick) onClick();
+    else if (moved) { recalcPositions(); post({ cmd: 'setItems', items: state.items }); applyRunning(); }
+  }
+
+  document.addEventListener('pointermove', (e) => dragMove(e.clientX, e.clientY));
+  document.addEventListener('pointerup', () => dragEnd());
+  document.addEventListener('dragstart', (e) => e.preventDefault());
+
+  // ===== Aperçus de fenêtres (miniatures DWM) + clic pour lancer =====
+  function setupApp(tile) {
+    tile.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      clearTimeout(pvTimer);
+      if (pvShown) closePreviews();
+      if (menuShown) { closeMenu(); return; }
+      e.preventDefault();
+      try { tile.setPointerCapture(e.pointerId); } catch (_) {}
+      dragStart(tile, e.clientX, e.clientY, () => {
+        if (tile.dataset.type === 'app') launch(tile.dataset.path);
+      });
+    });
+    tile.addEventListener('pointerenter', () => {
+      if (drag || menuShown || tile.dataset.type !== 'app') return;
+      const i = state.items.findIndex((it) => String(it.id) === tile.dataset.id);
+      const wins = state.windows[i] || [];
+      if (!wins.length) return;
+      clearTimeout(pvCloseTimer);
+      if (pvShown) { pvIndex = i; renderPreviews(); return; }
+      clearTimeout(pvTimer);
+      pvTimer = setTimeout(() => { pvIndex = i; post({ cmd: 'previews' }); }, 380);
+    });
+    tile.addEventListener('pointerleave', () => {
+      clearTimeout(pvTimer);
+      if (pvShown) schedulePvClose();
+    });
+  }
+
+  // ===== Aperçus de fenêtres (miniatures DWM) =====
+  let pvTimer = null, pvCloseTimer = null, pvIndex = -1, pvShown = false;
+
+  window.__previewsShow = () => { pvShown = true; setGrownWindow(true); renderPreviews(); };
+
+  function renderPreviews() {
+    const c = document.getElementById('previews');
+    c.innerHTML = '';
+    const wins = state.windows[pvIndex] || [];
+    if (!wins.length) { closePreviews(); return; }
+    wins.forEach((w) => {
+      const card = document.createElement('div');
+      card.className = 'pv-card';
+      const head = document.createElement('div');
+      head.className = 'pv-head';
+      const t = document.createElement('span');
+      t.textContent = w.t;
+      const x = document.createElement('button');
+      x.className = 'pv-x';
+      x.textContent = '✕';
+      x.addEventListener('click', (e) => {
+        e.stopPropagation();
+        post({ cmd: 'closeWin', h: w.h });
+        closePreviews();
+      });
+      head.appendChild(t); head.appendChild(x);
+      const th = document.createElement('div');
+      th.className = 'pv-thumb';
+      card.appendChild(head); card.appendChild(th);
+      card.addEventListener('click', () => {
+        pvShown = false; pvIndex = -1;
+        document.getElementById('previews').classList.remove('show');
+        post({ cmd: 'activate', h: w.h });
+      });
+      c.appendChild(card);
+    });
+
+    // Position près de la tuile, côté bureau.
+    const it = (state.items || [])[pvIndex];
+    const tile = it ? document.getElementById('bar').querySelector('[data-id="' + it.id + '"]') : null;
+    const tr = tile ? tile.getBoundingClientRect() : { top: 8, left: 8 };
+    const thpx = state.thickness;
+    c.classList.add('show');
+    if (vertical()) {
+      if (state.edge === 'right') { c.style.right = thpx + 'px'; c.style.left = 'auto'; }
+      else { c.style.left = thpx + 'px'; c.style.right = 'auto'; }
+      let top = Math.min(tr.top, window.innerHeight - c.offsetHeight - 8);
+      c.style.top = Math.max(8, top) + 'px';
+      c.style.bottom = 'auto';
+    } else {
+      if (state.edge === 'top') { c.style.top = thpx + 'px'; c.style.bottom = 'auto'; }
+      else { c.style.bottom = thpx + 'px'; c.style.top = 'auto'; }
+      let left = Math.min(tr.left, window.innerWidth - c.offsetWidth - 8);
+      c.style.left = Math.max(8, left) + 'px';
+      c.style.right = 'auto';
+    }
+
+    // Envoie les rectangles des zones miniature à Rust (px CSS).
+    requestAnimationFrame(() => {
+      const rects = [...c.querySelectorAll('.pv-thumb')].map((el, i) => {
+        const r = el.getBoundingClientRect();
+        return { h: wins[i].h, x: r.left, y: r.top, w: r.width, hh: r.height };
+      });
+      post({ cmd: 'thumbs', rects });
+    });
+  }
+
+  function schedulePvClose() {
+    clearTimeout(pvCloseTimer);
+    pvCloseTimer = setTimeout(closePreviews, 300);
+  }
+  function closePreviews() {
+    clearTimeout(pvTimer); clearTimeout(pvCloseTimer);
+    if (!pvShown) return;
+    pvShown = false; pvIndex = -1;
+    document.getElementById('previews').classList.remove('show');
+    if (!menuShown) setGrownWindow(false);
+    post(menuShown ? { cmd: 'clearThumbs' } : { cmd: 'hidePreviews' });
+    syncPeek();
+  }
+  {
+    const c = document.getElementById('previews');
+    c.addEventListener('pointerenter', () => clearTimeout(pvCloseTimer));
+    c.addEventListener('pointerleave', schedulePvClose);
+  }
+
+  // ===== Menu contextuel =====
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (pvShown) closePreviews();
+    const el = e.target.closest('.tile, .sep, .cwidget');
+    // Index dans state.items (pas l'index DOM : l'ordre peut différer après un drag).
+    const index = el ? state.items.findIndex((it) => String(it.id) === el.dataset.id) : -1;
+    const kind = el && el.classList.contains('cwidget') ? 'widget' : (el ? 'item' : 'bg');
+    menuCtx = { kind, index, x: e.clientX, y: e.clientY };
+    if (menuShown) showMenu();
+    else post({ cmd: 'grow' });
+  });
+  window.__grown = () => { menuShown = true; setGrownWindow(true); showMenu(); };
+
+  // ===== Masquage automatique =====
+  // La barre repliée ne laisse que quelques pixels à l'écran : y amener le
+  // curseur la fait glisser, la quitter la range. Elle reste sortie tant
+  // qu'un menu ou des aperçus sont ouverts.
+  let pointerOver = false;
+  function syncPeek() {
+    if (state.autohide) post({ cmd: 'peek', show: pointerOver || menuShown || pvShown });
+  }
+  document.documentElement.addEventListener('mouseenter', () => { pointerOver = true; syncPeek(); });
+  document.documentElement.addEventListener('mouseleave', () => { pointerOver = false; syncPeek(); });
+
+  function mkBtn(label, mark, cls, onClick, keepOpen) {
+    const b = document.createElement('button');
+    if (cls) b.className = cls;
+    const m = document.createElement('span'); m.className = 'mark'; m.textContent = mark || '';
+    const t = document.createElement('span'); t.textContent = label;
+    b.appendChild(m); b.appendChild(t);
+    b.addEventListener('click', () => { onClick(); if (!keepOpen) closeMenu(); });
+    return b;
+  }
+  const hr = () => document.createElement('hr');
+
+  function showMenu() {
+    const menu = document.getElementById('menu');
+    menu.innerHTML = '';
+    menu.classList.remove('settings');
+
+    if (menuCtx.kind === 'bg') {
+      const EDGES = { right: 'à droite', left: 'à gauche', top: 'en haut', bottom: 'en bas' };
+      const others = [...(state.edges || [])];
+      const self = others.indexOf(state.edge);
+      if (self >= 0) others.splice(self, 1); // bords des AUTRES barres
+      const free = Object.keys(EDGES).filter((e) => !(state.edges || []).includes(e));
+
+      menu.appendChild(mkBtn('Lancer au démarrage', state.startup ? '✓' : '', '', () => post({ cmd: 'toggleStartup' })));
+      menu.appendChild(mkBtn('Masquage automatique', state.autohide ? '✓' : '', '', () => post({ cmd: 'autohide' })));
+      menu.appendChild(hr());
+      for (const [e, lab] of Object.entries(EDGES)) {
+        if (e !== state.edge && others.includes(e)) continue; // occupé par une autre barre
+        menu.appendChild(mkBtn('Barre ' + lab, state.edge === e ? '•' : '', '', () => post({ cmd: 'setEdge', edge: e })));
+      }
+      if (free.length || state.canRemove) menu.appendChild(hr());
+      for (const e of free) {
+        menu.appendChild(mkBtn('Ajouter une barre ' + EDGES[e], '+', '', () => post({ cmd: 'addBar', edge: e })));
+      }
+      if (state.canRemove) {
+        menu.appendChild(mkBtn('Supprimer cette barre', '', 'danger', () => post({ cmd: 'removeBar' })));
+      }
+      menu.appendChild(hr());
+      menu.appendChild(mkBtn('Priorité barres verticales', state.priority === 'vertical' ? '•' : '', '', () => post({ cmd: 'setPriority', p: 'vertical' })));
+      menu.appendChild(mkBtn('Priorité barres horizontales', state.priority === 'horizontal' ? '•' : '', '', () => post({ cmd: 'setPriority', p: 'horizontal' })));
+      menu.appendChild(hr());
+      menu.appendChild(mkBtn('Ajouter un séparateur', '', '', addSeparator));
+      menu.appendChild(mkBtn('Ajouter un bloc widget…', '', '', showWidgetEditor, true));
+      menu.appendChild(mkBtn('Ajouter un espaceur', '', '', addSpacer));
+      menu.appendChild(mkBtn('Paramètres…', '', '', showSettings, true));
+      menu.appendChild(hr());
+      menu.appendChild(mkBtn('Quitter Ledge', '', 'danger', () => post({ cmd: 'close' })));
+    } else if (menuCtx.kind === 'widget') {
+      const idx = menuCtx.index;
+      menu.appendChild(mkBtn('Supprimer ce widget', '', 'danger', () => {
+        if (idx >= 0 && idx < state.items.length) {
+          state.items.splice(idx, 1);
+          post({ cmd: 'setItems', items: state.items });
+          renderBar();
+        }
+      }));
+      menu.appendChild(mkBtn('Ajouter un espaceur', '', '', () => {
+        const w = state.items[idx];
+        // Place l'espaceur juste après ce widget.
+        state.items.push({ type: 'widget', code: '', size: 40, spacer: true,
+                           pos: (w ? w.pos + itemMainSize(w) : 0) + 12 });
+        ensurePositions();
+        post({ cmd: 'setItems', items: state.items });
+        renderBar();
+      }));
+      menu.appendChild(hr());
+      menu.appendChild(mkBtn('Nouveau bloc widget…', '', '', showWidgetEditor, true));
+      menu.appendChild(mkBtn('Paramètres…', '', '', showSettings, true));
+    } else {
+      const it = state.items[menuCtx.index];
+      const wins = state.windows[menuCtx.index] || [];
+      if (it && it.type === 'app') {
+        menu.appendChild(mkBtn('Lancer', '', '', () => launch(it.path)));
+        if (wins.length) {
+          menu.appendChild(mkBtn('Réduire', '', '', () => wins.forEach((w) => post({ cmd: 'minimizeWin', h: w.h }))));
+          menu.appendChild(mkBtn(wins.length > 1 ? 'Fermer toutes les fenêtres' : 'Fermer la fenêtre', '', '', () => wins.forEach((w) => post({ cmd: 'closeWin', h: w.h }))));
+        }
+        menu.appendChild(hr());
+      }
+      menu.appendChild(mkBtn('Supprimer', '', 'danger', () => deleteItem(menuCtx.index)));
+    }
+
+    menu.classList.remove('hidden');
+    positionMenu(menu);
+  }
+
+  function positionMenu(menu) {
+    const th = state.thickness;
+    const h = menu.offsetHeight, w = menu.offsetWidth;
+    if (!vertical()) {
+      if (state.edge === 'top') { menu.style.top = th + 'px'; menu.style.bottom = 'auto'; }
+      else { menu.style.bottom = th + 'px'; menu.style.top = 'auto'; }
+      let left = Math.min(menuCtx.x, window.innerWidth - w - 4);
+      menu.style.left = Math.max(4, left) + 'px';
+      menu.style.right = 'auto';
+    } else {
+      if (state.edge === 'right') { menu.style.right = th + 'px'; menu.style.left = 'auto'; }
+      else { menu.style.left = th + 'px'; menu.style.right = 'auto'; }
+      let top = Math.min(menuCtx.y, window.innerHeight - h - 4);
+      menu.style.top = Math.max(4, top) + 'px';
+      menu.style.bottom = 'auto';
+    }
+  }
+
+  function closeMenu() {
+    const menu = document.getElementById('menu');
+    menu.classList.add('hidden');
+    menu.classList.remove('settings');
+    menu.innerHTML = '';
+    menuCtx = null;
+    if (menuShown) { menuShown = false; setGrownWindow(false); post({ cmd: 'shrink' }); }
+    syncPeek();
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (menuShown && !e.target.closest('#menu')) closeMenu();
+  }, true);
+  window.addEventListener('blur', () => {
+    if (menuShown) closeMenu();
+    if (pvShown) closePreviews();
+    // Glisser interrompu (perte du focus) : on remet la barre en état normal.
+    if (drag) {
+      drag.el.classList.remove('dragging');
+      document.body.classList.remove('ctrl');
+      drag = null;
+    }
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (menuShown) closeMenu(); if (pvShown) closePreviews(); } });
+
+  function addSeparator() { state.items.push({ type: 'separator' }); ensurePositions(); post({ cmd: 'setItems', items: state.items }); renderBar(); }
+  function addSpacer() {
+    state.items.push({ type: 'widget', code: '', size: 40, spacer: true });
+    ensurePositions();
+    post({ cmd: 'setItems', items: state.items });
+    renderBar();
+  }
+  function deleteItem(i) { state.items.splice(i, 1); post({ cmd: 'setItems', items: state.items }); renderBar(); }
+
+  // ===== Panneau Réglages =====
+  function sRow(label, key, min, max, unit) {
+    const row = document.createElement('div'); row.className = 's-row';
+    const l = document.createElement('label'); l.textContent = label;
+    const out = document.createElement('span'); out.className = 's-val'; out.textContent = state[key] + unit;
+    const inp = document.createElement('input');
+    inp.type = 'range'; inp.min = min; inp.max = max; inp.value = state[key];
+    inp.addEventListener('input', () => {
+      const v = parseInt(inp.value); out.textContent = v + unit;
+      if (key !== 'thickness') { state[key] = v; applyMetrics(); }
+    });
+    inp.addEventListener('change', () => {
+      state[key] = parseInt(inp.value);
+      applyMetrics();
+      post({ cmd: 'metrics', thickness: state.thickness, icon: state.icon, gap: state.gap });
+    });
+    row.appendChild(l); row.appendChild(out); row.appendChild(inp);
+    return row;
+  }
+
+  function showSettings() {
+    const menu = document.getElementById('menu');
+    menu.innerHTML = '';
+    menu.classList.add('settings');
+    const title = document.createElement('div'); title.className = 's-title'; title.textContent = 'Réglages';
+    menu.appendChild(title);
+    menu.appendChild(sRow('Épaisseur de la barre', 'thickness', 40, 160, ' px'));
+    menu.appendChild(sRow('Taille des icônes', 'icon', 16, 64, ' px'));
+    menu.appendChild(sRow('Espacement', 'gap', 0, 32, ' px'));
+
+    const gTitle = document.createElement('div'); gTitle.className = 's-title'; gTitle.style.marginTop = '14px'; gTitle.textContent = 'Jauges système';
+    menu.appendChild(gTitle);
+
+    // Une jauge cochée = présente dans la liste unifiée state.items.
+    const mkCheck = (label, key) => {
+      const wrap = document.createElement('label'); wrap.className = 's-check';
+      const chk = document.createElement('input'); chk.type = 'checkbox';
+      chk.checked = state.items.some((w) => w.type === 'gauge' && w.key === key);
+      chk.addEventListener('change', () => {
+        const has = (k) => state.items.some((w) => w.type === 'gauge' && w.key === k);
+        if (chk.checked) {
+          if (!has(key)) state.items.push({ type: 'gauge', key });
+        } else {
+          state.items = state.items.filter((w) => !(w.type === 'gauge' && w.key === key));
+        }
+        ensurePositions();
+        post({ cmd: 'setItems', items: state.items });
+        renderBar();
+      });
+      const sp = document.createElement('span'); sp.textContent = label;
+      wrap.appendChild(chk); wrap.appendChild(sp);
+      return wrap;
+    };
+    menu.appendChild(mkCheck('Afficher CPU', 'cpu'));
+    menu.appendChild(mkCheck('Afficher RAM', 'ram'));
+    menu.appendChild(mkCheck('Afficher GPU', 'gpu'));
+    menu.appendChild(mkCheck('Afficher VRAM', 'vram'));
+
+    // --- Apparence ---
+    const aTitle = document.createElement('div');
+    aTitle.className = 's-title'; aTitle.style.marginTop = '14px'; aTitle.textContent = 'Apparence';
+    menu.appendChild(aTitle);
+
+    const look = state.look || (state.look = {});
+    const lookCheck = (label, key, onChange) => {
+      const wrap = document.createElement('label'); wrap.className = 's-check';
+      const chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = !!look[key];
+      chk.addEventListener('change', () => {
+        look[key] = chk.checked;
+        applyLook(); postLook();
+        if (onChange) onChange(chk.checked);
+      });
+      const sp = document.createElement('span'); sp.textContent = label;
+      wrap.appendChild(chk); wrap.appendChild(sp);
+      return wrap;
+    };
+
+    // Couleur : soit celle de la barre des tâches, soit la nôtre.
+    const colorRow = document.createElement('div'); colorRow.className = 's-row';
+    const colorLab = document.createElement('label'); colorLab.textContent = 'Couleur';
+    const colorInp = document.createElement('input');
+    colorInp.type = 'color';
+    colorInp.value = look.color || '#16171b';
+    colorInp.style.width = '46px'; colorInp.style.height = '24px';
+    colorInp.style.padding = '0'; colorInp.style.marginBottom = '0';
+    colorInp.addEventListener('input', () => { look.color = colorInp.value; applyLook(); });
+    colorInp.addEventListener('change', postLook);
+    colorRow.appendChild(colorLab); colorRow.appendChild(colorInp);
+
+    const syncColorRow = (sys) => { colorRow.style.opacity = sys ? '.4' : ''; colorInp.disabled = !!sys; };
+    menu.appendChild(lookCheck('Couleur de la barre des tâches', 'systemColor', syncColorRow));
+    menu.appendChild(colorRow);
+    syncColorRow(look.systemColor);
+
+    // Opacité
+    const opRow = document.createElement('div'); opRow.className = 's-row';
+    const opLab = document.createElement('label'); opLab.textContent = 'Opacité';
+    const opVal = document.createElement('span'); opVal.className = 's-val';
+    const opInp = document.createElement('input');
+    opInp.type = 'range'; opInp.min = 10; opInp.max = 100;
+    opInp.value = look.opacity == null ? 100 : look.opacity;
+    opVal.textContent = opInp.value + ' %';
+    opInp.addEventListener('input', () => {
+      look.opacity = parseInt(opInp.value);
+      opVal.textContent = look.opacity + ' %';
+      applyLook();
+    });
+    opInp.addEventListener('change', postLook);
+    opRow.appendChild(opLab); opRow.appendChild(opVal); opRow.appendChild(opInp);
+    menu.appendChild(opRow);
+
+    menu.appendChild(lookCheck('Flou d’arrière-plan (verre dépoli)', 'blur'));
+    menu.appendChild(lookCheck('Ombre portée', 'shadow'));
+
+    const lookHint = document.createElement('div'); lookHint.className = 's-hint';
+    lookHint.textContent = 'Le flou ne se voit qu’avec une opacité inférieure à 100 %.';
+    menu.appendChild(lookHint);
+
+    menu.classList.remove('hidden');
+    positionMenu(menu);
+  }
+
+  // ===== Éditeur de bloc widget =====
+  function showWidgetEditor() {
+    const menu = document.getElementById('menu');
+    menu.innerHTML = '';
+    menu.classList.add('settings');
+    const title = document.createElement('div'); title.className = 's-title'; title.textContent = 'Nouveau bloc widget';
+    menu.appendChild(title);
+
+    const impDiv = document.createElement('div'); impDiv.className = 's-import'; impDiv.style.marginBottom = '8px';
+    const sel = document.createElement('select'); sel.id = 'wfile-select';
+    const optDef = document.createElement('option'); optDef.value = ''; optDef.textContent = '-- Modèles / Fichiers --';
+    sel.appendChild(optDef);
+    const btnLoad = document.createElement('button'); btnLoad.textContent = 'Charger';
+    btnLoad.addEventListener('click', () => {
+      if (sel.value) post({ cmd: 'widgetFileGet', name: sel.value });
+    });
+    impDiv.appendChild(sel); impDiv.appendChild(btnLoad);
+    menu.appendChild(impDiv);
+
+    const nameInp = document.createElement('input'); nameInp.type = 'text'; nameInp.id = 'wfile-name';
+    nameInp.placeholder = 'Nom du fichier (pour sauvegarder)';
+    menu.appendChild(nameInp);
+
+    const ta = document.createElement('textarea');
+    ta.placeholder = '<style>body{color:#fff;font:12px sans-serif}</style>\n<div id="w">Hello</div>\n<script>/* votre JS */<\/script>';
+    menu.appendChild(ta);
+
+    const hint = document.createElement('div'); hint.className = 's-hint';
+    hint.textContent = 'HTML/CSS/JS libre, rendu isolé. Poignées = redimensionner, Ctrl+glisser = déplacer, cadre = clic droit.';
+    menu.appendChild(hint);
+
+    const actions = document.createElement('div'); actions.className = 's-actions';
+    const btnSaveFile = document.createElement('button'); btnSaveFile.textContent = 'Sauvegarder fichier';
+    btnSaveFile.addEventListener('click', () => {
+      const n = nameInp.value.trim();
+      const c = ta.value.trim();
+      if (n && c) {
+        post({ cmd: 'widgetFileSave', name: n, code: c });
+        post({ cmd: 'widgetFiles' });
+      }
+    });
+    const add = document.createElement('button'); add.textContent = 'Ajouter à la barre';
+    add.addEventListener('click', () => {
+      const code = ta.value.trim();
+      if (code) {
+        state.items.push({ type: 'widget', code, size: 120 });
+        ensurePositions();
+        post({ cmd: 'setItems', items: state.items });
+        renderBar();
+      }
+      closeMenu();
+    });
+    actions.appendChild(btnSaveFile); actions.appendChild(add);
+    menu.appendChild(actions);
+
+    menu.classList.remove('hidden');
+    positionMenu(menu);
+    ta.focus();
+
+    post({ cmd: 'widgetFiles' });
+  }
+
+  window.setWidgetFiles = function(files) {
+    const sel = document.getElementById('wfile-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Modèles / Fichiers --</option>';
+    (files || []).forEach((f) => {
+      const opt = document.createElement('option'); opt.value = f; opt.textContent = f;
+      sel.appendChild(opt);
+    });
+  };
+
+  window.widgetFileLoaded = function(name, code) {
+    const nameInp = document.getElementById('wfile-name');
+    const ta = document.querySelector('#menu textarea');
+    if (nameInp) nameInp.value = name;
+    if (ta) ta.value = code;
+  };
+
+
+  window.addEventListener('message', (e) => {
+    if (!e.data || !e.data.type) return;
+    const bar = document.getElementById('bar');
+    if (e.data.type === 'cwidget-contextmenu') {
+      const i = state.items.findIndex((it) => String(it.id) === String(e.data.id));
+      if (i < 0) return;
+      menuCtx = { kind: 'widget', index: i, x: e.data.clientX, y: e.data.clientY };
+      if (menuShown) showMenu();
+      else post({ cmd: 'grow' });
+    } else if (e.data.type === 'cwidget-dragstart') {
+      const el = bar.querySelector('[data-id="' + e.data.id + '"]');
+      if (!el) return;
+      const r = (el.querySelector('iframe') || el).getBoundingClientRect();
+      dragStart(el, r.left + (e.data.clientX || 0), r.top + (e.data.clientY || 0));
+    } else if (e.data.type === 'cwidget-dragmove') {
+      if (!drag) return;
+      const r = (drag.el.querySelector('iframe') || drag.el).getBoundingClientRect();
+      dragMove(r.left + (e.data.clientX || 0), r.top + (e.data.clientY || 0));
+    } else if (e.data.type === 'cwidget-dragend') {
+      dragEnd();
+    }
+  });
+
+  // ===== Redimensionnement des widgets (2 poignées) =====
+  let wres = null;
+  function startWidgetResize(e, box, atStart) {
+    if (e.ctrlKey) return; // Ctrl = glisser, pas redimensionner.
+    e.preventDefault();
+    const i = state.items.findIndex((it) => String(it.id) === box.dataset.id);
+    const w = state.items[i];
+    if (i < 0 || !w || w.type === 'gauge' || typeof w.size !== 'number') return;
+    wres = { i, box, atStart, start: vertical() ? e.clientY : e.clientX, size: w.size };
+    const iframes = document.querySelectorAll('.cwidget iframe');
+    iframes.forEach((f) => (f.style.pointerEvents = 'none'));
+    const move = (ev) => {
+      if (!wres) return;
+      const cur = vertical() ? ev.clientY : ev.clientX;
+      // Poignée de début : tirer vers le début agrandit. Poignée de fin :
+      // tirer vers la fin agrandit.
+      const d = wres.atStart ? (wres.start - cur) : (cur - wres.start);
+      const s = Math.max(30, Math.min(600, wres.size + d));
+      state.items[wres.i].size = s;
+      if (vertical()) wres.box.style.height = s + 'px';
+      else wres.box.style.width = s + 'px';
+    };
+    const up = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+      iframes.forEach((f) => (f.style.pointerEvents = ''));
+      if (wres) { post({ cmd: 'setItems', items: state.items }); wres = null; }
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+  }
+
+  // ===== Jauges système =====
+  function setGauge(id, pct, text) {
+    const g = document.getElementById('g-' + id); if (!g) return;
+    g.querySelector('.val').textContent = text;
+    const bar = g.querySelector('.bar > i');
+    const p = Math.min(100, Math.max(0, pct));
+    bar.style.width = p + '%';
+    bar.style.background = p < 60 ? 'var(--ok)' : p < 85 ? 'var(--warn)' : 'var(--bad)';
+  }
+  window.updateStats = (o) => {
+    lastHasGpu = o.hasGpu;
+    setGauge('cpu', o.cpu, o.cpu + '%');
+    setGauge('ram', o.ramT > 0 ? (o.ramU / o.ramT) * 100 : 0, o.ramU.toFixed(1) + ' Go');
+    if (o.hasGpu) {
+      setGauge('gpu', o.gpu, o.gpu + '%');
+      setGauge('vram', o.vramT > 0 ? (o.vramU / o.vramT) * 100 : 0, o.vramU.toFixed(1) + ' Go');
+    }
+    // La visibilité dépend des cases cochées, pas seulement de la présence
+    // d'un GPU : sans ça chaque tick réaffichait GPU et VRAM décochés.
+    applyGauges();
+  };
+
+  post({ cmd: 'ready' });
+</script>
+</body>
+</html>

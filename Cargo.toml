@@ -1,0 +1,49 @@
+[package]
+name = "ledge"
+version = "0.1.0"
+edition = "2021"
+description = "Docked Windows sidebar with a web UI: pinned apps, live gauges, and widgets."
+license = "MIT"
+repository = "https://github.com/infinition/ledge"
+readme = "README.md"
+
+[dependencies]
+tao = "0.30"
+wry = "0.45"
+sysinfo = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+winreg = "0.52"
+nvml-wrapper = "0.10"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+windows-core = "0.58"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+# Un binaire plus léger et sans console en release
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
